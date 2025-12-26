@@ -4,7 +4,7 @@ import type { SelectedKeywords } from "@/lib/core/types";
 import { generateSystemPrompt, generateUserPrompt } from "@/lib/core";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const STORY_MODEL = "anthropic/claude-sonnet-4-5";
+const STORY_MODEL = "anthropic/claude-sonnet-4.5";
 
 /**
  * Generates a Korean "sseol" (story) using OpenRouter with Claude Sonnet 4.5.
