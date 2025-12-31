@@ -1,6 +1,12 @@
 /* Image placement prompts for Gemini */
 
-import type { Phrase, ImageDescription } from "@/lib/core/types";
+import type {
+  Phrase,
+  ImageDescription,
+  PlacementContext,
+  CharacterInfo,
+  LocationInfo,
+} from "@/lib/core/types";
 
 /*
  * Prompt Design Notes:
@@ -19,13 +25,92 @@ Your task: Analyze images and story structure, then determine optimal placement 
 
 CRITICAL: You must respond with ONLY a valid JSON object. No explanations, no markdown, no code blocks.`;
 
+/*
+ * Helper: Format character info for prompt inclusion.
+ * Only included when characters are extracted from the story.
+ */
+function formatCharacterContext(characters: CharacterInfo[]): string {
+  if (characters.length === 0) return "";
+
+  const characterList = characters
+    .map((c) => {
+      const traits = [c.mood1, c.mood2, c.age, c.sex].filter(Boolean).join(", ");
+      return `- ${c.name}: ${traits || c.traits || "특성 미상"}`;
+    })
+    .join("\n");
+
+  return `## Characters in Story
+
+${characterList}
+
+`;
+}
+
+/*
+ * Helper: Format location info for prompt inclusion.
+ * Maps each scene to its inferred location.
+ */
+function formatLocationContext(locations: LocationInfo[]): string {
+  if (locations.length === 0) return "";
+
+  const locationList = locations
+    .map((l) => `- Scene ${l.phraseIndex}: ${l.location}`)
+    .join("\n");
+
+  return `## Scene Locations
+
+${locationList}
+
+`;
+}
+
+/*
+ * Helper: Build contextual placement strategy based on available context.
+ *
+ * This function generates additional placement guidelines when character
+ * and/or location information is available. The strategy helps Gemini
+ * make more semantically relevant placement decisions.
+ */
+function buildContextualStrategy(
+  hasCharacters: boolean,
+  hasLocations: boolean
+): string {
+  if (!hasCharacters && !hasLocations) return "";
+
+  const strategies: string[] = [];
+
+  if (hasCharacters) {
+    strategies.push(`
+3. 캐릭터 매칭 (Character Matching):
+   - 이미지의 subjects가 캐릭터 이름/특성과 일치하면 해당 캐릭터 대사 문장에 우선 배치
+   - 예: subjects=["woman", "20s"] → 20대 여성 캐릭터의 대사 씬에 배치
+   - 캐릭터 mood(차분한, 밝은 등)와 이미지 mood 매칭 고려`);
+  }
+
+  if (hasLocations) {
+    strategies.push(`
+${hasCharacters ? "4" : "3"}. 장소 매칭 (Location Matching):
+   - 이미지의 subjects/mood가 씬의 location과 일치하면 해당 씬에 우선 배치
+   - 예: subjects=["coffee", "cup"] + location="카페" → 해당 씬에 phrase-scope 배치
+   - 실내/실외, 분위기(따뜻한/차가운) 등 간접적 매칭도 고려`);
+  }
+
+  return strategies.join("\n");
+}
+
 /**
  * Builds the complete prompt for image placement.
  * Includes story structure, image descriptions, and placement rules.
+ *
+ * Enhanced in P3 to accept optional PlacementContext with character/location info.
+ * When provided, the prompt includes additional matching strategies:
+ * - Match image subjects to character names/traits
+ * - Match image mood to scene locations
  */
 export const buildImagePlacementPrompt = (
   phrases: Phrase[],
-  imageDescriptions: ImageDescription[]
+  imageDescriptions: ImageDescription[],
+  context?: PlacementContext
 ): string => {
   /* Format story structure with clear hierarchy */
   const storyStructure = phrases
@@ -84,8 +169,30 @@ export const buildImagePlacementPrompt = (
   const jsonExample = JSON.stringify({ placements: examplePlacements }, null, 2);
 
   /*
+   * Build context sections (only if provided).
+   * Character/location context helps Gemini make smarter placement decisions
+   * by understanding WHO speaks WHERE in each scene.
+   */
+  const characterSection = context?.characters
+    ? formatCharacterContext(context.characters)
+    : "";
+  const locationSection = context?.locations
+    ? formatLocationContext(context.locations)
+    : "";
+
+  /*
+   * Build enhanced placement strategy based on available context.
+   * When character/location info is available, we add specific matching rules.
+   */
+  const contextualStrategy = buildContextualStrategy(
+    Boolean(context?.characters?.length),
+    Boolean(context?.locations?.length)
+  );
+
+  /*
    * Prompt structure follows "Lost in the Middle" research:
    * - CRITICAL CONSTRAINTS at top (primacy effect)
+   * - Context info (characters/locations) early for reference
    * - Soft guidelines in middle
    * - JSON reminder at end (recency effect)
    */
@@ -98,7 +205,7 @@ Analyze the images below and determine where each should be placed in the story.
 3. On conflict, the image with higher confidence takes the position
 4. Every image must be placed exactly once
 
-## Story Structure (${phrases.length} scenes)
+${characterSection}${locationSection}## Story Structure (${phrases.length} scenes)
 
 ${storyStructure}
 
@@ -141,7 +248,7 @@ Field definitions:
 2. 서사 흐름 고려:
    - 중요 이미지는 핵심 순간에
    - 보조 이미지는 자연스럽게 분배
-
+${contextualStrategy}
 Respond with ONLY the JSON object, no other text.`;
 };
 
