@@ -2,11 +2,25 @@
  * Viral Content Generation API Route
  *
  * Generates SNS-optimized descriptions and hashtags for story content.
- * Uses Duyo API (yumeta.kr) to create engaging social media copy.
+ * Uses direct OpenRouter calls (migrated from yumeta.kr proxy).
+ *
+ * Model: openai/gpt-4o
  */
 
 import { NextResponse } from "next/server";
-import { generateViralContent } from "@/lib/duyo/client";
+import {
+  callOpenRouter,
+  getOpenRouterKey,
+  OpenRouterAPIError,
+} from "@/lib/llm/openrouter";
+import {
+  buildGenerateViralRequest,
+  parseViralResponse,
+} from "@/lib/prompts";
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * API Types (backwards compatible)
+ * ───────────────────────────────────────────────────────────────────────────── */
 
 export interface GenerateViralAPIRequest {
   storyContent: string;
@@ -23,6 +37,10 @@ export interface GenerateViralAPIResponse {
   };
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Route Handler
+ * ───────────────────────────────────────────────────────────────────────────── */
+
 export async function POST(request: Request) {
   try {
     const body: GenerateViralAPIRequest = await request.json();
@@ -35,8 +53,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const openRouterKey = process.env.OPENROUTER_API_KEY;
-    if (!openRouterKey) {
+    /* Get API key */
+    let apiKey: string;
+    try {
+      apiKey = getOpenRouterKey();
+    } catch {
       return NextResponse.json(
         { error: "OPENROUTER_API_KEY not configured" },
         { status: 500 }
@@ -45,27 +66,44 @@ export async function POST(request: Request) {
 
     console.log("[generate-viral] Generating viral content for story length:", body.storyContent.length);
 
-    const result = await generateViralContent(openRouterKey, {
+    /* Build and send request */
+    const requestParams = buildGenerateViralRequest({
       storyContent: body.storyContent,
     });
 
-    console.log("[generate-viral] Generated description length:", result.description.length);
-    console.log("[generate-viral] Generated hashtags:", result.hashtags.split(" ").length, "tags");
+    const result = await callOpenRouter(apiKey, requestParams);
+
+    /* Parse response */
+    const parsed = parseViralResponse(result.content);
+
+    console.log("[generate-viral] Generated description length:", parsed.description.length);
+    console.log("[generate-viral] Generated hashtags:", parsed.hashtags.split(" ").filter(Boolean).length, "tags");
 
     const response: GenerateViralAPIResponse = {
       success: true,
-      description: result.description,
-      hashtags: result.hashtags,
+      description: parsed.description,
+      hashtags: parsed.hashtags,
       model: result.model,
       usage: {
-        inputTokens: result.token_info.input_tokens,
-        outputTokens: result.token_info.output_tokens,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
       },
     };
 
     return NextResponse.json(response);
   } catch (error) {
     console.error("[generate-viral] Error:", error);
+
+    if (error instanceof OpenRouterAPIError) {
+      return NextResponse.json(
+        {
+          error: "OpenRouter API error",
+          details: error.message,
+          code: error.errorCode,
+        },
+        { status: error.statusCode }
+      );
+    }
 
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(

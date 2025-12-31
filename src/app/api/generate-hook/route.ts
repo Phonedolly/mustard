@@ -2,12 +2,26 @@
  * HOOK Generation API Route
  *
  * Generates attention-grabbing HOOK content for short-form video intros.
- * Uses Duyo API (yumeta.kr) to generate multiple HOOK variations.
+ * Uses direct OpenRouter calls (migrated from yumeta.kr proxy).
+ *
+ * Model: anthropic/claude-sonnet-4-5-20250929
  */
 
 import { NextResponse } from "next/server";
-import { generateHook } from "@/lib/duyo/client";
-import type { HookType } from "@/lib/duyo/types";
+import {
+  callOpenRouter,
+  getOpenRouterKey,
+  OpenRouterAPIError,
+} from "@/lib/llm/openrouter";
+import {
+  buildGenerateHookRequest,
+  parseHookResponse,
+  type HookType,
+} from "@/lib/prompts";
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * API Types (backwards compatible)
+ * ───────────────────────────────────────────────────────────────────────────── */
 
 export interface GenerateHookAPIRequest {
   bodyContent: string;
@@ -25,6 +39,10 @@ export interface GenerateHookAPIResponse {
   };
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Route Handler
+ * ───────────────────────────────────────────────────────────────────────────── */
+
 export async function POST(request: Request) {
   try {
     const body: GenerateHookAPIRequest = await request.json();
@@ -37,8 +55,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const openRouterKey = process.env.OPENROUTER_API_KEY;
-    if (!openRouterKey) {
+    /* Get API key */
+    let apiKey: string;
+    try {
+      apiKey = getOpenRouterKey();
+    } catch {
       return NextResponse.json(
         { error: "OPENROUTER_API_KEY not configured" },
         { status: 500 }
@@ -47,41 +68,59 @@ export async function POST(request: Request) {
 
     console.log("[generate-hook] Generating hooks for content length:", body.bodyContent.length);
 
-    const result = await generateHook(openRouterKey, {
+    /* Build and send request */
+    const requestParams = buildGenerateHookRequest({
       bodyContent: body.bodyContent,
       hookType: body.hookType,
     });
 
-    console.log("[generate-hook] Generated", Object.keys(result.hooks).length, "hook variations");
+    const result = await callOpenRouter(apiKey, requestParams);
 
-    /* Select the first hook as default if hookType was specified */
+    /* Parse response */
+    const hooks = parseHookResponse(result.content);
+
+    console.log("[generate-hook] Generated", Object.keys(hooks).length, "hook variations");
+
+    /* Select hook if specific type was requested */
     let selectedHook: string | undefined;
     if (body.hookType && body.hookType !== "auto") {
-      const koreanType = {
+      // Map English type to Korean label for lookup
+      const koreanType: Record<string, string> = {
         question: "질문형",
-        shocking: "충격 사실형",
+        shocking_fact: "충격 사실형",
         contrast: "대비형",
-        teaser: "스토리 티저형",
-        statistic: "통계 강조형",
-        action: "행동 유도형",
-      }[body.hookType];
-      selectedHook = result.hooks[koreanType];
+        story_teaser: "스토리 티저형",
+        statistics: "통계 강조형",
+        action_inducing: "행동 유도형",
+      };
+      selectedHook = hooks[koreanType[body.hookType] || body.hookType];
     }
 
     const response: GenerateHookAPIResponse = {
       success: true,
-      hooks: result.hooks,
+      hooks,
       selectedHook,
-      model: result.model_used,
+      model: result.model,
       usage: {
-        inputTokens: result.token_info.input_tokens,
-        outputTokens: result.token_info.output_tokens,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
       },
     };
 
     return NextResponse.json(response);
   } catch (error) {
     console.error("[generate-hook] Error:", error);
+
+    if (error instanceof OpenRouterAPIError) {
+      return NextResponse.json(
+        {
+          error: "OpenRouter API error",
+          details: error.message,
+          code: error.errorCode,
+        },
+        { status: error.statusCode }
+      );
+    }
 
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(

@@ -1,26 +1,30 @@
-/* API Route: Split Story into Scenes via yumeta.kr Proxy */
+/**
+ * Scene Splitting API Route
+ *
+ * Splits a story into individual scenes for short-form content production.
+ * Uses direct OpenRouter calls (migrated from yumeta.kr proxy).
+ *
+ * Model: x-ai/grok-4-fast
+ */
 
 import { NextRequest, NextResponse } from "next/server";
+import {
+  callOpenRouter,
+  getOpenRouterKey,
+  OpenRouterAPIError,
+} from "@/lib/llm/openrouter";
+import {
+  buildSplitSceneRequest,
+  parseSplitSceneResponse,
+} from "@/lib/prompts";
 import { parseSplitSceneContent } from "@/lib/core/parseScript";
 import { calculateCost } from "@/lib/llm/pricing";
-import type { SplitSceneResponse, Phrase } from "@/lib/core/types";
+import type { Phrase } from "@/lib/core/types";
 
-const SPLIT_SCENE_API_URL = "https://yumeta.kr/duyo_api/split_scene.php";
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Route Handler
+ * ───────────────────────────────────────────────────────────────────────────── */
 
-/*
- * POST /api/split-scenes
- *
- * Proxies the split_scene API from yumeta.kr and parses the response
- * into structured Phrases with Statements.
- *
- * Request body:
- * - story: string (raw story text to split)
- *
- * Response:
- * - phrases: Phrase[] (structured scene data)
- * - raw: string (raw content from upstream API)
- * - usage: { prompt_tokens, completion_tokens }
- */
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
 
@@ -28,6 +32,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { story } = body;
 
+    /* Validate required fields */
     if (!story || typeof story !== "string" || story.trim().length === 0) {
       return NextResponse.json(
         { error: "story is required and must be a non-empty string" },
@@ -35,70 +40,44 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const openRouterKey = process.env.OPENROUTER_API_KEY;
-
-    if (!openRouterKey) {
+    /* Get API key */
+    let apiKey: string;
+    try {
+      apiKey = getOpenRouterKey();
+    } catch {
       return NextResponse.json(
         { error: "OPENROUTER_API_KEY not configured" },
         { status: 500 }
       );
     }
 
-    /*
-     * Call the upstream split_scene API.
-     *
-     * Request: { _openrouter_key, story }
-     * Response: { success, content, usage, model, token_info }
-     *
-     * Content format:
-     * "scene 1\n첫번째 문장\n두번째 문장\n\nscene 2\n다음 문장\n..."
-     */
-    const upstreamResponse = await fetch(SPLIT_SCENE_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        _openrouter_key: openRouterKey,
-        story: story.trim(),
-      }),
-    });
+    /* Build and send request */
+    const requestParams = buildSplitSceneRequest({ story: story.trim() });
 
-    if (!upstreamResponse.ok) {
-      const errorText = await upstreamResponse.text();
-      console.error("Upstream API error:", errorText);
-      return NextResponse.json(
-        { error: `Upstream API returned ${upstreamResponse.status}` },
-        { status: 502 }
-      );
-    }
+    const result = await callOpenRouter(apiKey, requestParams);
 
-    const upstreamData: SplitSceneResponse = await upstreamResponse.json();
-
-    if (!upstreamData.success) {
-      return NextResponse.json(
-        { error: "Upstream API returned success: false" },
-        { status: 502 }
-      );
-    }
+    /* Parse response using the prompt module parser */
+    const parsedScenes = parseSplitSceneResponse(result.content);
 
     /* Log raw API response for debugging */
-    console.log("=== yumeta API raw response ===");
-    console.log("Content length:", upstreamData.content.length);
-    console.log("First 1000 chars:", upstreamData.content.slice(0, 1000));
-    console.log("Double newline count:", (upstreamData.content.match(/\n\n/g) || []).length);
-    console.log("Scene header count:", (upstreamData.content.match(/scene \d+/gi) || []).length);
+    console.log("=== OpenRouter direct response ===");
+    console.log("Content length:", parsedScenes.rawContent.length);
+    console.log("Scene count:", parsedScenes.scenes.length);
     console.log("================================");
 
-    const phrases: Phrase[] = parseSplitSceneContent(upstreamData.content);
+    /*
+     * Use the existing parseScript parser for backwards compatibility.
+     * This converts the raw scene content into Phrase/Statement structure.
+     */
+    const phrases: Phrase[] = parseSplitSceneContent(parsedScenes.rawContent);
 
     console.log("Parsed phrases count:", phrases.length);
     console.log("Total statements:", phrases.reduce((sum, p) => sum + p.statements.length, 0));
 
     /* Build normalized usage object consistent with other API routes */
-    const inputTokens = upstreamData.usage?.prompt_tokens || 0;
-    const outputTokens = upstreamData.usage?.completion_tokens || 0;
-    const model = upstreamData.model || "unknown";
+    const inputTokens = result.usage.inputTokens;
+    const outputTokens = result.usage.outputTokens;
+    const model = result.model;
     const latencyMs = Date.now() - startTime;
 
     const usage = {
@@ -114,15 +93,24 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       phrases,
-      raw: upstreamData.content,
+      raw: parsedScenes.rawContent,
       usage,
     });
   } catch (error) {
-    console.error("split-scenes API error:", error);
+    console.error("[split-scenes] Error:", error);
 
-    const message =
-      error instanceof Error ? error.message : "Unknown error occurred";
+    if (error instanceof OpenRouterAPIError) {
+      return NextResponse.json(
+        {
+          error: "OpenRouter API error",
+          details: error.message,
+          code: error.errorCode,
+        },
+        { status: error.statusCode }
+      );
+    }
 
+    const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

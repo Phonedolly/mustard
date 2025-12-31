@@ -2,16 +2,30 @@
  * CTA Generation API Route
  *
  * Generates Call-To-Action content for short-form video endings.
- * Uses Duyo API (yumeta.kr) to generate multiple CTA variations.
+ * Uses direct OpenRouter calls (migrated from yumeta.kr proxy).
+ *
+ * Model: anthropic/claude-sonnet-4-5-20250929
  */
 
 import { NextResponse } from "next/server";
-import { generateCTA } from "@/lib/duyo/client";
-import type { CTAType } from "@/lib/duyo/types";
+import {
+  callOpenRouter,
+  getOpenRouterKey,
+  OpenRouterAPIError,
+} from "@/lib/llm/openrouter";
+import {
+  buildGenerateCtaRequest,
+  parseCtaResponse,
+  type CtaType,
+} from "@/lib/prompts";
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * API Types (backwards compatible)
+ * ───────────────────────────────────────────────────────────────────────────── */
 
 export interface GenerateCTAAPIRequest {
   bodyContent: string;
-  ctaType?: CTAType;
+  ctaType?: CtaType;
 }
 
 export interface GenerateCTAAPIResponse {
@@ -25,6 +39,10 @@ export interface GenerateCTAAPIResponse {
   };
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Route Handler
+ * ───────────────────────────────────────────────────────────────────────────── */
+
 export async function POST(request: Request) {
   try {
     const body: GenerateCTAAPIRequest = await request.json();
@@ -37,8 +55,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const openRouterKey = process.env.OPENROUTER_API_KEY;
-    if (!openRouterKey) {
+    /* Get API key */
+    let apiKey: string;
+    try {
+      apiKey = getOpenRouterKey();
+    } catch {
       return NextResponse.json(
         { error: "OPENROUTER_API_KEY not configured" },
         { status: 500 }
@@ -47,40 +68,58 @@ export async function POST(request: Request) {
 
     console.log("[generate-cta] Generating CTAs for content length:", body.bodyContent.length);
 
-    const result = await generateCTA(openRouterKey, {
+    /* Build and send request */
+    const requestParams = buildGenerateCtaRequest({
       bodyContent: body.bodyContent,
       ctaType: body.ctaType,
     });
 
-    console.log("[generate-cta] Generated", Object.keys(result.ctas).length, "CTA variations");
+    const result = await callOpenRouter(apiKey, requestParams);
 
-    /* Select the first CTA as default if ctaType was specified */
+    /* Parse response */
+    const ctas = parseCtaResponse(result.content);
+
+    console.log("[generate-cta] Generated", Object.keys(ctas).length, "CTA variations");
+
+    /* Select CTA if specific type was requested */
     let selectedCTA: string | undefined;
     if (body.ctaType && body.ctaType !== "auto") {
-      const koreanType = {
+      // Map English type to Korean label for lookup
+      const koreanType: Record<string, string> = {
         engagement: "참여 유도형",
         subscribe: "구독/팔로우 유형",
-        extend: "확장 시청 유도형",
-        convert: "행동 전환형",
-        urgent: "즉각 행동 촉구형",
-      }[body.ctaType];
-      selectedCTA = result.ctas[koreanType];
+        extended_viewing: "확장 시청 유도형",
+        external_action: "행동 전환형",
+        fomo: "즉각 행동 촉구형",
+      };
+      selectedCTA = ctas[koreanType[body.ctaType] || body.ctaType];
     }
 
     const response: GenerateCTAAPIResponse = {
       success: true,
-      ctas: result.ctas,
+      ctas,
       selectedCTA,
-      model: result.model_used,
+      model: result.model,
       usage: {
-        inputTokens: result.token_info.input_tokens,
-        outputTokens: result.token_info.output_tokens,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
       },
     };
 
     return NextResponse.json(response);
   } catch (error) {
     console.error("[generate-cta] Error:", error);
+
+    if (error instanceof OpenRouterAPIError) {
+      return NextResponse.json(
+        {
+          error: "OpenRouter API error",
+          details: error.message,
+          code: error.errorCode,
+        },
+        { status: error.statusCode }
+      );
+    }
 
     const message = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
