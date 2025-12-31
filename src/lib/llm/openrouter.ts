@@ -5,7 +5,7 @@
  * Replaces the previous yumeta.kr proxy approach with direct API calls.
  *
  * Supported models:
- * - anthropic/claude-sonnet-4-5-20250929 (HOOK/CTA generation)
+ * - anthropic/claude-sonnet-4.5 (HOOK/CTA generation)
  * - openai/gpt-4o (story refinement)
  * - openai/gpt-4o-mini (character/location extraction)
  * - x-ai/grok-4-fast (scene splitting)
@@ -80,9 +80,14 @@ export interface CallOpenRouterResult {
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-/* Model aliases for convenience */
+/*
+ * Model aliases for convenience.
+ *
+ * Note: Previous model ID "anthropic/claude-sonnet-4-5-20250929" was invalid.
+ * OpenRouter uses "anthropic/claude-sonnet-4.5" (with dot, not dash).
+ */
 export const MODELS = {
-  CLAUDE_SONNET_4_5: "anthropic/claude-sonnet-4-5-20250929",
+  CLAUDE_SONNET_4_5: "anthropic/claude-sonnet-4.5",
   GPT_4O: "openai/gpt-4o",
   GPT_4O_MINI: "openai/gpt-4o-mini",
   GROK_4_FAST: "x-ai/grok-4-fast",
