@@ -50,19 +50,53 @@ export const buildImagePlacementPrompt = (
     })
     .join("\n\n");
 
-  /* Build concrete JSON example based on actual data */
-  const examplePlacements = imageDescriptions.slice(0, 2).map((img, i) => ({
-    imageIndex: img.index,
-    type: "phrase",
-    phraseIndex: Math.min(i, phrases.length - 1),
-    confidence: 0.85,
-    reason: "Example reason in Korean",
-  }));
+  /*
+   * Build concrete JSON examples showing both scope types.
+   * Gemini learns better from diverse examples than abstract rules.
+   */
+  const examplePlacements = [];
+
+  /* Example 1: phrase-level (scene background) */
+  if (imageDescriptions.length > 0) {
+    examplePlacements.push({
+      imageIndex: imageDescriptions[0].index,
+      type: "phrase",
+      phraseIndex: 0,
+      confidence: 0.85,
+      reason: "배경/분위기 이미지 - 씬 전체의 무드와 어울림 (scope: phrase)",
+    });
+  }
+
+  /* Example 2: statement-level (specific content) */
+  if (imageDescriptions.length > 1 && phrases.length > 0) {
+    const targetPhrase = Math.min(1, phrases.length - 1);
+    const maxStmt = phrases[targetPhrase]?.statements.length - 1 || 0;
+    examplePlacements.push({
+      imageIndex: imageDescriptions[1].index,
+      type: "statement",
+      phraseIndex: targetPhrase,
+      statementIndices: [Math.min(1, maxStmt)],
+      confidence: 0.9,
+      reason: "특정 물체 이미지 - 해당 문장에서 언급된 내용과 직접 연결 (scope: statement)",
+    });
+  }
 
   const jsonExample = JSON.stringify({ placements: examplePlacements }, null, 2);
 
+  /*
+   * Prompt structure follows "Lost in the Middle" research:
+   * - CRITICAL CONSTRAINTS at top (primacy effect)
+   * - Soft guidelines in middle
+   * - JSON reminder at end (recency effect)
+   */
   return `## Task
 Analyze the images below and determine where each should be placed in the story.
+
+## CRITICAL CONSTRAINTS (must follow)
+1. One Phrase can have at most 1 phrase-scope image
+2. One Statement can have at most 1 image
+3. On conflict, the image with higher confidence takes the position
+4. Every image must be placed exactly once
 
 ## Story Structure (${phrases.length} scenes)
 
@@ -78,24 +112,35 @@ Return a JSON object with this EXACT structure:
 ${jsonExample}
 
 Field definitions:
-- imageIndex: The image number (0 to ${imageDescriptions.length - 1})
-- type: Either "phrase" (covers entire scene) or "statement" (specific lines only)
-- phraseIndex: Scene number where image should appear (0 to ${phrases.length - 1})
-- confidence: How well the image fits (0.0 to 1.0)
-- reason: Brief Korean explanation of why this placement works
+- imageIndex: 이미지 번호 (0 to ${imageDescriptions.length - 1})
+- type: "phrase" (씬 전체 배경) 또는 "statement" (특정 문장)
+- phraseIndex: 씬 번호 (0 to ${phrases.length - 1})
+- statementIndices: [type="statement"일 때 필수] 해당 문장 인덱스 배열
+- confidence: 적합도 (0.0 to 1.0)
+- reason: 한국어로 배치 이유 설명
+
+## Scope Selection Guide
+
+### "phrase" scope:
+- 배경/분위기/장소 이미지
+- 씬 전체의 무드를 설정
+- 이미지 수가 씬 수보다 적을 때
+
+### "statement" scope:
+- 특정 물체/행동 이미지
+- 문장에서 직접 언급된 내용
+- statementIndices로 범위 지정 (단일: [2], 연속: [2, 3, 4])
+- 숏폼 특성상 적절한 노출 시간 고려
 
 ## Placement Strategy
 
-1. Match image content to scene content:
-   - Food images -> scenes mentioning food/eating
-   - Location images -> scenes describing places
-   - Emotion images -> scenes with matching emotional tone
+1. 이미지 내용과 스토리 매칭:
+   - 음식 이미지 → 음식 언급 문장 (statement)
+   - 장소 이미지 → 해당 씬 전체 (phrase)
 
-2. Consider narrative flow:
-   - Important images at key story moments
-   - Supporting images distributed naturally
-
-3. Each image must be placed exactly once.
+2. 서사 흐름 고려:
+   - 중요 이미지는 핵심 순간에
+   - 보조 이미지는 자연스럽게 분배
 
 Respond with ONLY the JSON object, no other text.`;
 };
