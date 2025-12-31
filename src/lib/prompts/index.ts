@@ -52,3 +52,22 @@ export {
   buildSplitSceneRequest,
   parseSplitSceneResponse,
 } from "./splitScene";
+
+/* Character Extraction */
+export {
+  type ExtractCharactersInput,
+  type CharacterDetail,
+  type ParsedCharacters,
+  extractCharacterNames,
+  buildExtractCharactersRequest,
+  parseCharactersResponse,
+} from "./extractCharacters";
+
+/* Location Extraction */
+export {
+  type GetLocationInput,
+  type ProcessedScene,
+  type ParsedLocations,
+  buildGetLocationRequest,
+  parseLocationResponse,
+} from "./getLocation";
