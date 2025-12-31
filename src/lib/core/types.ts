@@ -72,6 +72,38 @@ export interface ImagePlacement {
   confidence: number;
 }
 
+/*
+ * PlacementContext: Additional context for smarter image placement.
+ *
+ * Previously, placeImages() only received Phrase[] and ImageDescription[].
+ * This limited placement decisions to basic text/image matching.
+ *
+ * With PlacementContext, we can leverage:
+ * - Character info: Match image subjects to speaking characters
+ * - Location info: Match image mood/subjects to scene locations
+ *
+ * Example: An image with subjects=["woman", "kitchen"] should prioritize
+ * placement in scenes where location="kitchen" or speaker includes a female character.
+ */
+export interface PlacementContext {
+  characters?: CharacterInfo[];
+  locations?: LocationInfo[];
+}
+
+export interface CharacterInfo {
+  name: string;
+  traits?: string;
+  mood1?: string;
+  mood2?: string;
+  age?: string;
+  sex?: string;
+}
+
+export interface LocationInfo {
+  phraseIndex: number;
+  location: string;
+}
+
 export interface SplitSceneResponse {
   success: boolean;
   content: string;
