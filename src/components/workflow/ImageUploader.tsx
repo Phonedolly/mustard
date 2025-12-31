@@ -26,7 +26,7 @@ const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 export function ImageUploader({
   onImagesChange,
-  maxImages = 10,
+  maxImages = 50,
   maxSizeMB = 5,
 }: ImageUploaderProps) {
   const [images, setImages] = useState<UploadedImage[]>([]);

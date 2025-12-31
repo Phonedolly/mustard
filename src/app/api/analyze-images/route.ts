@@ -6,9 +6,9 @@ import type { ImageDescription } from "@/lib/core/types";
 
 /*
  * Maximum number of images allowed per request.
- * Gemini has rate limits, and processing many images can be slow.
+ * Gemini 2.5 Flash supports up to 50 images per batch request.
  */
-const MAX_IMAGES = 10;
+const MAX_IMAGES = 50;
 
 /*
  * Maximum size per image in bytes (5MB).
