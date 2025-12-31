@@ -6,7 +6,6 @@ import { useState, useCallback } from "react";
 import {
   KeywordForm,
   ImageUploader,
-  StoryDisplay,
   PhraseTree,
   WorkflowStepper,
   PlacementVisualizer,
@@ -15,6 +14,8 @@ import {
 } from "@/components/workflow";
 import { LLMUsageBar } from "@/components/llm-usage";
 import { useLLMUsage, generateLogId } from "@/context/LLMUsageContext";
+import { StoryEditor } from "@/components/story/StoryEditor";
+import { ViralContentPanel } from "@/components/export/ViralContentPanel";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { SelectedKeywords, Phrase, ImagePlacement, ImageDescription, LLMUsageLog } from "@/lib/core/types";
@@ -33,6 +34,8 @@ export default function Home() {
 
   /* Data State */
   const [story, setStory] = useState("");
+  const [hook, setHook] = useState<string | null>(null);
+  const [cta, setCTA] = useState<string | null>(null);
   const [phrases, setPhrases] = useState<Phrase[]>([]);
   const [images, setImages] = useState<UploadedImage[]>([]);
   const [imageDescriptions, setImageDescriptions] = useState<ImageDescription[]>([]);
@@ -324,16 +327,23 @@ export default function Home() {
             <KeywordForm onSubmit={handleGenerateStory} isLoading={isGenerating} />
           </TabsContent>
 
-          {/* Step 2: Story */}
-          <TabsContent value="story" className="space-y-6">
-            <StoryDisplay
+          {/* Step 2: Story Editor with HOOK/BODY/CTA */}
+          <TabsContent value="story" className="min-h-[600px]">
+            <StoryEditor
               story={story}
-              onStoryChange={setStory}
+              hook={hook}
+              body={story}
+              cta={cta}
+              onHookChange={setHook}
+              onBodyChange={setStory}
+              onCTAChange={setCTA}
               onSplitScenes={handleSplitScenes}
-              isLoading={isSplitting}
+              isSplitting={isSplitting}
             />
             {phrases.length > 0 && (
-              <PhraseTree phrases={phrases} placements={placements} />
+              <div className="mt-6">
+                <PhraseTree phrases={phrases} placements={placements} />
+              </div>
             )}
           </TabsContent>
 
@@ -366,36 +376,47 @@ export default function Home() {
               onPlacementChange={handlePlacementChange}
             />
 
-            {/* Export / Summary Section */}
-            <div className="flex justify-between items-center p-4 border rounded-lg bg-muted/30">
-              <div>
-                <p className="font-medium">Placement Complete</p>
-                <p className="text-sm text-muted-foreground">
-                  {placements.length} images placed across {phrases.length} scenes
-                </p>
+            {/* Export Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Basic Export */}
+              <div className="flex justify-between items-center p-4 border rounded-lg bg-muted/30">
+                <div>
+                  <p className="font-medium">Placement Complete</p>
+                  <p className="text-sm text-muted-foreground">
+                    {placements.length} images placed across {phrases.length} scenes
+                  </p>
+                </div>
+                <Button
+                  onClick={() => {
+                    /* Export placement data as JSON */
+                    const exportData = {
+                      hook,
+                      body: story,
+                      cta,
+                      phrases,
+                      placements,
+                      imageDescriptions,
+                    };
+                    const blob = new Blob(
+                      [JSON.stringify(exportData, null, 2)],
+                      { type: "application/json" }
+                    );
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "placement-data.json";
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                >
+                  Export JSON
+                </Button>
               </div>
-              <Button
-                onClick={() => {
-                  /* Export placement data as JSON */
-                  const exportData = {
-                    phrases,
-                    placements,
-                    imageDescriptions,
-                  };
-                  const blob = new Blob(
-                    [JSON.stringify(exportData, null, 2)],
-                    { type: "application/json" }
-                  );
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = "placement-data.json";
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-              >
-                Export JSON
-              </Button>
+
+              {/* SNS Export */}
+              <ViralContentPanel
+                storyContent={[hook, story, cta].filter(Boolean).join("\n\n")}
+              />
             </div>
           </TabsContent>
         </Tabs>
