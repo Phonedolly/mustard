@@ -66,6 +66,63 @@ export function PlacementVisualizer({
       .filter((i) => !placedIndices.has(i));
   }, [placements, images]);
 
+  /*
+   * Create a map of statement to placement for quick lookup.
+   * Key format: "phraseIndex-statementIndex"
+   * Only includes statement-level placements.
+   */
+  const placementsByStatement = useMemo(() => {
+    const map = new Map<string, ImagePlacement>();
+    placements.forEach((p) => {
+      if (p.type === "statement" && p.statementIndices) {
+        p.statementIndices.forEach((stmtIdx) => {
+          map.set(`${p.phraseIndex}-${stmtIdx}`, p);
+        });
+      }
+    });
+    return map;
+  }, [placements]);
+
+  /*
+   * Get phrase-level placements for a scene (shown in header).
+   */
+  const getPhraseLevelPlacements = useCallback(
+    (phraseIndex: number): ImagePlacement[] => {
+      return (placementsByPhrase.get(phraseIndex) || []).filter(
+        (p) => p.type === "phrase"
+      );
+    },
+    [placementsByPhrase]
+  );
+
+  /*
+   * Get statement-level placements for a scene (shown inline).
+   */
+  const getStatementLevelPlacements = useCallback(
+    (phraseIndex: number): ImagePlacement[] => {
+      return (placementsByPhrase.get(phraseIndex) || []).filter(
+        (p) => p.type === "statement"
+      );
+    },
+    [placementsByPhrase]
+  );
+
+  /*
+   * Generate a consistent color class for each image.
+   * Used to visually connect statements with their images.
+   */
+  const getImageColor = useCallback((imageIndex: number) => {
+    const colors = [
+      { border: "border-blue-400", bg: "bg-blue-50", text: "text-blue-600" },
+      { border: "border-green-400", bg: "bg-green-50", text: "text-green-600" },
+      { border: "border-purple-400", bg: "bg-purple-50", text: "text-purple-600" },
+      { border: "border-orange-400", bg: "bg-orange-50", text: "text-orange-600" },
+      { border: "border-pink-400", bg: "bg-pink-50", text: "text-pink-600" },
+      { border: "border-cyan-400", bg: "bg-cyan-50", text: "text-cyan-600" },
+    ];
+    return colors[imageIndex % colors.length];
+  }, []);
+
   const handleDragStart = useCallback((imageIndex: number) => {
     setDraggedImageIndex(imageIndex);
   }, []);
@@ -248,7 +305,9 @@ export function PlacementVisualizer({
           <CardContent>
             <div className="space-y-3">
               {phrases.map((phrase, phraseIndex) => {
-                const phrasePlacements = placementsByPhrase.get(phraseIndex) || [];
+                const phraseLevelPlacements = getPhraseLevelPlacements(phraseIndex);
+                const statementLevelPlacements = getStatementLevelPlacements(phraseIndex);
+                const allPlacements = placementsByPhrase.get(phraseIndex) || [];
                 const isDropTarget = hoveredPhraseIndex === phraseIndex;
 
                 return (
@@ -262,87 +321,165 @@ export function PlacementVisualizer({
                       ${isDropTarget ? "border-primary bg-primary/5 ring-2 ring-primary/20" : ""}
                     `}
                   >
-                    {/* Phrase Header */}
-                    <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b">
-                      <Badge variant="default">Scene {phraseIndex + 1}</Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {phrase.statements.length} statements
-                      </span>
-                    </div>
-
-                    {/* Statements List - Always visible with clear hierarchy */}
-                    <div className="divide-y">
-                      {phrase.statements.map((statement, stmtIdx) => (
-                        <div
-                          key={statement.id}
-                          className="flex items-start gap-3 px-3 py-2 hover:bg-muted/30"
-                        >
-                          <span className="text-xs text-muted-foreground/60 w-6 flex-shrink-0 pt-0.5 text-right">
-                            {stmtIdx + 1}.
+                    {/* Scene Header with PHRASE-level images */}
+                    <div className="flex items-start gap-2 px-3 py-2 bg-muted/50 border-b">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="default">Scene {phraseIndex + 1}</Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {phrase.statements.length} statements
                           </span>
-                          <p className="text-sm text-foreground flex-1">
-                            {statement.displayText}
-                          </p>
                         </div>
-                      ))}
+                      </div>
+
+                      {/* PHRASE-level images in header (scene background) */}
+                      {phraseLevelPlacements.length > 0 && (
+                        <div className="flex gap-2">
+                          {phraseLevelPlacements.map((placement) => (
+                            <div
+                              key={placement.imageIndex}
+                              className="relative group cursor-pointer"
+                              onClick={() => setModalImageIndex(placement.imageIndex)}
+                            >
+                              <div className="w-14 h-14 rounded border-2 border-dashed border-muted-foreground/50 overflow-hidden">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={getImagePreview(placement.imageIndex)}
+                                  alt={`Scene background ${placement.imageIndex + 1}`}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                              <Badge
+                                className="absolute -top-2 -left-2 text-xs"
+                                variant="default"
+                              >
+                                {placement.imageIndex + 1}
+                              </Badge>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                className="absolute -top-1 -right-1 h-4 w-4 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removePlacement(placement.imageIndex);
+                                }}
+                              >
+                                X
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Placed Images */}
-                    {phrasePlacements.length > 0 && (
-                      <div className="flex flex-wrap gap-2 p-3 border-t bg-muted/20">
-                        {phrasePlacements.map((placement) => (
-                          <div
-                            key={placement.imageIndex}
-                            className="relative group cursor-pointer"
-                            onClick={() => setModalImageIndex(placement.imageIndex)}
-                          >
-                            <div className="w-16 h-16 rounded border overflow-hidden">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={getImagePreview(placement.imageIndex)}
-                                alt={`Placed ${placement.imageIndex + 1}`}
-                                className="w-full h-full object-cover"
-                              />
+                    {/* Statements with inline STATEMENT-level images */}
+                    <div>
+                      {phrase.statements.map((statement, stmtIdx) => {
+                        const stmtPlacement = placementsByStatement.get(
+                          `${phraseIndex}-${stmtIdx}`
+                        );
+                        const colorClasses = stmtPlacement
+                          ? getImageColor(stmtPlacement.imageIndex)
+                          : null;
+
+                        return (
+                          <div key={statement.id}>
+                            {/* Statement text row */}
+                            <div
+                              className={`
+                                flex items-start gap-3 px-3 py-2
+                                ${stmtPlacement ? `${colorClasses?.bg} border-l-4 ${colorClasses?.border}` : "hover:bg-muted/30"}
+                              `}
+                            >
+                              <span className="text-xs text-muted-foreground/60 w-6 flex-shrink-0 pt-0.5 text-right">
+                                {stmtIdx + 1}.
+                              </span>
+                              <p className="text-sm text-foreground flex-1">
+                                {statement.displayText}
+                              </p>
+                              {stmtPlacement && (
+                                <Badge
+                                  variant="outline"
+                                  className={`text-xs flex-shrink-0 ${colorClasses?.border} ${colorClasses?.text}`}
+                                >
+                                  IMG {stmtPlacement.imageIndex + 1}
+                                </Badge>
+                              )}
                             </div>
-                            {/* Image Index Badge */}
-                            <Badge
-                              className="absolute -top-2 -left-2 text-xs"
-                              variant="default"
-                            >
-                              {placement.imageIndex + 1}
-                            </Badge>
-                            {/* Confidence Badge */}
-                            <Badge
-                              className="absolute -bottom-2 -right-2 text-xs"
-                              variant={
-                                placement.confidence > 0.7
-                                  ? "default"
-                                  : placement.confidence > 0.4
-                                    ? "secondary"
-                                    : "outline"
-                              }
-                            >
-                              {Math.round(placement.confidence * 100)}%
-                            </Badge>
-                            {/* Remove Button */}
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              className="absolute top-0 right-0 h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removePlacement(placement.imageIndex);
-                              }}
-                            >
-                              X
-                            </Button>
+
+                            {/* Inline image for STATEMENT-level placement */}
+                            {stmtPlacement && (
+                              <div
+                                className={`
+                                  ml-9 mr-3 mb-2 p-2 rounded
+                                  border-2 border-dashed ${colorClasses?.border}
+                                  ${colorClasses?.bg}
+                                `}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <div
+                                    className="relative group cursor-pointer flex-shrink-0"
+                                    onClick={() => setModalImageIndex(stmtPlacement.imageIndex)}
+                                  >
+                                    <div className="w-16 h-16 rounded border overflow-hidden">
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={getImagePreview(stmtPlacement.imageIndex)}
+                                        alt={`Statement image ${stmtPlacement.imageIndex + 1}`}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    </div>
+                                    <Badge
+                                      className="absolute -top-2 -left-2 text-xs"
+                                      variant="default"
+                                    >
+                                      {stmtPlacement.imageIndex + 1}
+                                    </Badge>
+                                    <Badge
+                                      className="absolute -bottom-2 -left-2 text-xs"
+                                      variant="outline"
+                                    >
+                                      INL
+                                    </Badge>
+                                    <Badge
+                                      className="absolute -bottom-2 -right-2 text-xs"
+                                      variant={
+                                        stmtPlacement.confidence > 0.7
+                                          ? "default"
+                                          : stmtPlacement.confidence > 0.4
+                                            ? "secondary"
+                                            : "outline"
+                                      }
+                                    >
+                                      {Math.round(stmtPlacement.confidence * 100)}%
+                                    </Badge>
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      className="absolute top-0 right-0 h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removePlacement(stmtPlacement.imageIndex);
+                                      }}
+                                    >
+                                      X
+                                    </Button>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs text-muted-foreground line-clamp-2">
+                                      {stmtPlacement.reason}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        );
+                      })}
+                    </div>
 
                     {/* Empty Drop Zone Indicator */}
-                    {phrasePlacements.length === 0 && (
+                    {allPlacements.length === 0 && (
                       <div
                         className={`
                           m-3 border-2 border-dashed rounded p-3 text-center
@@ -443,10 +580,26 @@ export function PlacementVisualizer({
                   <div className="space-y-3">
                     <h4 className="text-sm font-medium">Placement Info</h4>
                     <div>
+                      <span className="text-xs text-muted-foreground">Type:</span>
+                      <Badge
+                        variant={modalPlacement.type === "phrase" ? "default" : "secondary"}
+                        className="ml-2"
+                      >
+                        {modalPlacement.type === "phrase" ? "Scene Background" : "Inline (Statement)"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center flex-wrap gap-1">
                       <span className="text-xs text-muted-foreground">Placed in:</span>
                       <Badge variant="default" className="ml-2">
                         Scene {modalPlacement.phraseIndex + 1}
                       </Badge>
+                      {modalPlacement.type === "statement" &&
+                        modalPlacement.statementIndices &&
+                        modalPlacement.statementIndices.length > 0 && (
+                          <Badge variant="outline" className="ml-1">
+                            Lines: {modalPlacement.statementIndices.map((i) => i + 1).join(", ")}
+                          </Badge>
+                        )}
                     </div>
                     <div>
                       <span className="text-xs text-muted-foreground">Confidence:</span>
