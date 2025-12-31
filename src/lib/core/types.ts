@@ -85,3 +85,85 @@ export interface SplitSceneResponse {
     output_tokens: number;
   };
 }
+
+/*
+ * LLM Usage Logging Types
+ * Used for tracking token usage, costs, and performance across all LLM calls.
+ */
+
+export type LLMProvider = "openrouter" | "gemini";
+
+export type LLMOperation =
+  | "story_generation"
+  | "split_scenes"
+  | "image_analysis"
+  | "image_placement";
+
+export interface LLMTokens {
+  input: number;
+  output: number;
+  total: number;
+  cached?: number;
+}
+
+export interface LLMNativeTokens {
+  input: number;
+  output: number;
+}
+
+export interface LLMCost {
+  total: number;
+  input: number;
+  output: number;
+  cacheDiscount?: number;
+  currency: "USD";
+}
+
+export interface LLMUsageLog {
+  id: string;
+  timestamp: string;
+  operation: LLMOperation;
+  provider: LLMProvider;
+  model: string;
+  success: boolean;
+  error?: string;
+
+  /* Token usage */
+  tokens: LLMTokens;
+  nativeTokens?: LLMNativeTokens;
+
+  /* Cost calculation */
+  cost: LLMCost;
+
+  /* Performance metrics */
+  latencyMs: number;
+  generationTimeSec?: number;
+
+  /* Provider-specific */
+  generationId?: string;
+  finishReason?: string;
+
+  /* For batch operations (e.g., image analysis) */
+  batchInfo?: {
+    totalItems: number;
+    itemLogs: LLMUsageLogItem[];
+  };
+}
+
+export interface LLMUsageLogItem {
+  index: number;
+  tokens: LLMTokens;
+  latencyMs: number;
+  success: boolean;
+  error?: string;
+}
+
+export interface LLMUsageSession {
+  startedAt: string;
+  logs: LLMUsageLog[];
+  totals: {
+    tokens: number;
+    cost: number;
+    calls: number;
+  };
+}
