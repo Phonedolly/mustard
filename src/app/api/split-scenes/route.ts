@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { parseSplitSceneContent } from "@/lib/core/parseScript";
+import { calculateCost } from "@/lib/llm/pricing";
 import type { SplitSceneResponse, Phrase } from "@/lib/core/types";
 
 const SPLIT_SCENE_API_URL = "https://yumeta.kr/duyo_api/split_scene.php";
@@ -21,6 +22,8 @@ const SPLIT_SCENE_API_URL = "https://yumeta.kr/duyo_api/split_scene.php";
  * - usage: { prompt_tokens, completion_tokens }
  */
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+
   try {
     const body = await request.json();
     const { story } = body;
@@ -92,11 +95,27 @@ export async function POST(request: NextRequest) {
     console.log("Parsed phrases count:", phrases.length);
     console.log("Total statements:", phrases.reduce((sum, p) => sum + p.statements.length, 0));
 
+    /* Build normalized usage object consistent with other API routes */
+    const inputTokens = upstreamData.usage?.prompt_tokens || 0;
+    const outputTokens = upstreamData.usage?.completion_tokens || 0;
+    const model = upstreamData.model || "unknown";
+    const latencyMs = Date.now() - startTime;
+
+    const usage = {
+      model,
+      tokens: {
+        input: inputTokens,
+        output: outputTokens,
+        total: inputTokens + outputTokens,
+      },
+      cost: calculateCost(model, inputTokens, outputTokens),
+      latencyMs,
+    };
+
     return NextResponse.json({
       phrases,
       raw: upstreamData.content,
-      usage: upstreamData.usage,
-      model: upstreamData.model,
+      usage,
     });
   } catch (error) {
     console.error("split-scenes API error:", error);

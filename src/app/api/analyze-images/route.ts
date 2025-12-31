@@ -2,7 +2,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeImagesFromBase64 } from "@/lib/gemini/analyzeImages";
-import type { ImageDescription } from "@/lib/core/types";
 
 /*
  * Maximum number of images allowed per request.
@@ -123,13 +122,14 @@ export async function POST(request: NextRequest) {
      * Analyze images using Gemini Vision.
      * This function handles errors gracefully, returning fallback descriptions
      * for images that fail to analyze.
+     * Returns both descriptions and usage metadata for client-side logging.
      */
-    const descriptions: ImageDescription[] = await analyzeImagesFromBase64(
-      images,
-      apiKey
-    );
+    const result = await analyzeImagesFromBase64(images, apiKey);
 
-    return NextResponse.json({ descriptions });
+    return NextResponse.json({
+      descriptions: result.descriptions,
+      usage: result.usage,
+    });
   } catch (error) {
     console.error("analyze-images API error:", error);
 

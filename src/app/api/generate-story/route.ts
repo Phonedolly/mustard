@@ -14,6 +14,7 @@ import type { SelectedKeywords } from "@/lib/core/types";
  *
  * Response:
  * - story: string (generated story text)
+ * - usage: object (token usage and cost metadata for client-side logging)
  *
  * This API follows the same interface as yt-shorts-generator-3,
  * requiring the full SelectedKeywords object for story generation.
@@ -47,9 +48,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const story = await generateStory(keywords, apiKey);
+    const result = await generateStory(keywords, apiKey);
 
-    return NextResponse.json({ story });
+    return NextResponse.json({
+      story: result.story,
+      usage: result.usage,
+    });
   } catch (error) {
     console.error("generate-story API error:", error);
 

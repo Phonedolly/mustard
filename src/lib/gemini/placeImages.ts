@@ -6,7 +6,14 @@ import {
   buildImagePlacementPrompt,
 } from "./prompts/imagePlacement";
 import { GEMINI_MODEL_ID } from "./client";
-import type { Phrase, ImageDescription, ImagePlacement } from "@/lib/core/types";
+import { calculateCost } from "@/lib/llm/pricing";
+import type {
+  Phrase,
+  ImageDescription,
+  ImagePlacement,
+  LLMTokens,
+  LLMCost,
+} from "@/lib/core/types";
 
 /*
  * Improvement Notes:
@@ -17,34 +24,52 @@ import type { Phrase, ImageDescription, ImagePlacement } from "@/lib/core/types"
  *   Gemini would include markdown or explanatory text around the JSON.
  */
 
+export interface ImagePlacementResult {
+  placements: ImagePlacement[];
+  usage: {
+    model: string;
+    tokens: LLMTokens;
+    cost: LLMCost;
+    latencyMs: number;
+    finishReason?: string;
+  };
+}
+
 /**
  * Determines optimal placement for images within the story structure.
  * Uses Gemini with JSON response mode for reliable structured output.
+ * Returns both placements and usage metadata for logging.
  */
 export async function placeImages(
   phrases: Phrase[],
   imageDescriptions: ImageDescription[],
   apiKey: string
-): Promise<ImagePlacement[]> {
+): Promise<ImagePlacementResult> {
+  const emptyUsage = {
+    model: GEMINI_MODEL_ID,
+    tokens: { input: 0, output: 0, total: 0 },
+    cost: { input: 0, output: 0, total: 0, currency: "USD" as const },
+    latencyMs: 0,
+  };
+
   if (imageDescriptions.length === 0) {
-    return [];
+    return { placements: [], usage: emptyUsage };
   }
 
   if (phrases.length === 0) {
     console.warn("placeImages: No phrases provided, using fallback");
-    return createFallbackPlacements(imageDescriptions, phrases);
+    return {
+      placements: createFallbackPlacements(imageDescriptions, phrases),
+      usage: emptyUsage,
+    };
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
+  const startTime = Date.now();
 
   /*
    * Configure model with JSON response mode.
    * This forces Gemini to output only valid JSON, eliminating parsing issues.
-   */
-  /*
-   * maxOutputTokens increased from 4096 to 8192.
-   * With 10+ images and 15+ scenes, each placement object containing Korean
-   * reason text, 4096 tokens was insufficient and caused truncated JSON responses.
    */
   const model = genAI.getGenerativeModel({
     model: GEMINI_MODEL_ID,
@@ -60,8 +85,33 @@ export async function placeImages(
 
   try {
     const result = await model.generateContent(userPrompt);
+    const latencyMs = Date.now() - startTime;
     const response = result.response;
     const text = response.text();
+
+    /* Extract usage metadata */
+    const usageMetadata = response.usageMetadata;
+    const inputTokens = usageMetadata?.promptTokenCount ?? 0;
+    const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
+
+    const tokens: LLMTokens = {
+      input: inputTokens,
+      output: outputTokens,
+      total: inputTokens + outputTokens,
+    };
+
+    const cost = calculateCost(GEMINI_MODEL_ID, inputTokens, outputTokens);
+
+    /* Get finish reason if available */
+    const finishReason = response.candidates?.[0]?.finishReason;
+
+    const usage = {
+      model: GEMINI_MODEL_ID,
+      tokens,
+      cost,
+      latencyMs,
+      finishReason,
+    };
 
     /* Log raw response for debugging (truncated) */
     console.log("Gemini placement response (first 500 chars):", text.slice(0, 500));
@@ -82,16 +132,25 @@ export async function placeImages(
           console.log("Extracted JSON from response");
         } catch {
           console.error("Failed to extract JSON from response");
-          return createFallbackPlacements(imageDescriptions, phrases);
+          return {
+            placements: createFallbackPlacements(imageDescriptions, phrases),
+            usage,
+          };
         }
       } else {
-        return createFallbackPlacements(imageDescriptions, phrases);
+        return {
+          placements: createFallbackPlacements(imageDescriptions, phrases),
+          usage,
+        };
       }
     }
 
     if (!parsed.placements || !Array.isArray(parsed.placements)) {
       console.error("Invalid placements structure:", parsed);
-      return createFallbackPlacements(imageDescriptions, phrases);
+      return {
+        placements: createFallbackPlacements(imageDescriptions, phrases),
+        usage,
+      };
     }
 
     /* Validate and clean up placements */
@@ -104,7 +163,10 @@ export async function placeImages(
     /* Check if we got valid placements for all images */
     if (validPlacements.length === 0) {
       console.warn("No valid placements found, using fallback");
-      return createFallbackPlacements(imageDescriptions, phrases);
+      return {
+        placements: createFallbackPlacements(imageDescriptions, phrases),
+        usage,
+      };
     }
 
     /* Fill in missing images if some were not placed */
@@ -112,14 +174,27 @@ export async function placeImages(
       console.warn(
         `Only ${validPlacements.length}/${imageDescriptions.length} images placed, filling gaps`
       );
-      return fillMissingPlacements(validPlacements, imageDescriptions, phrases);
+      return {
+        placements: fillMissingPlacements(validPlacements, imageDescriptions, phrases),
+        usage,
+      };
     }
 
     console.log(`Successfully placed ${validPlacements.length} images`);
-    return validPlacements;
+    return { placements: validPlacements, usage };
   } catch (error) {
+    const latencyMs = Date.now() - startTime;
     console.error("Image placement API error:", error);
-    return createFallbackPlacements(imageDescriptions, phrases);
+
+    return {
+      placements: createFallbackPlacements(imageDescriptions, phrases),
+      usage: {
+        model: GEMINI_MODEL_ID,
+        tokens: { input: 0, output: 0, total: 0 },
+        cost: { input: 0, output: 0, total: 0, currency: "USD" as const },
+        latencyMs,
+      },
+    };
   }
 }
 

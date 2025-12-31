@@ -13,9 +13,11 @@ import {
   useWorkflowState,
   type UploadedImage,
 } from "@/components/workflow";
+import { LLMUsageBar } from "@/components/llm-usage";
+import { useLLMUsage, generateLogId } from "@/context/LLMUsageContext";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { SelectedKeywords, Phrase, ImagePlacement, ImageDescription } from "@/lib/core/types";
+import type { SelectedKeywords, Phrase, ImagePlacement, ImageDescription, LLMUsageLog } from "@/lib/core/types";
 
 export default function Home() {
   /* Workflow State */
@@ -24,8 +26,10 @@ export default function Home() {
     completedSteps,
     goToStep,
     completeStep,
-    nextStep,
   } = useWorkflowState("keywords");
+
+  /* LLM Usage Logging */
+  const { addLog, setLoading } = useLLMUsage();
 
   /* Data State */
   const [story, setStory] = useState("");
@@ -46,6 +50,7 @@ export default function Home() {
   /* Step 1: Generate Story */
   const handleGenerateStory = useCallback(async (keywords: SelectedKeywords) => {
     setIsGenerating(true);
+    setLoading("story_generation");
     setError(null);
 
     try {
@@ -61,6 +66,23 @@ export default function Home() {
         throw new Error(data.error || "Failed to generate story");
       }
 
+      /* Log usage */
+      if (data.usage) {
+        const log: LLMUsageLog = {
+          id: generateLogId(),
+          timestamp: new Date().toISOString(),
+          operation: "story_generation",
+          provider: "openrouter",
+          model: data.usage.model,
+          success: true,
+          tokens: data.usage.tokens,
+          cost: data.usage.cost,
+          latencyMs: data.usage.latencyMs,
+          generationId: data.usage.generationId,
+        };
+        addLog(log);
+      }
+
       setStory(data.story);
       completeStep("keywords");
       goToStep("story");
@@ -68,14 +90,16 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setIsGenerating(false);
+      setLoading(null);
     }
-  }, [completeStep, goToStep]);
+  }, [completeStep, goToStep, addLog, setLoading]);
 
   /* Step 2: Split into Scenes */
   const handleSplitScenes = useCallback(async () => {
     if (!story) return;
 
     setIsSplitting(true);
+    setLoading("split_scenes");
     setError(null);
 
     try {
@@ -91,6 +115,22 @@ export default function Home() {
         throw new Error(data.error || "Failed to split scenes");
       }
 
+      /* Log LLM usage for split scenes */
+      if (data.usage) {
+        const log: LLMUsageLog = {
+          id: generateLogId(),
+          timestamp: new Date().toISOString(),
+          operation: "split_scenes",
+          provider: "openrouter",
+          model: data.usage.model,
+          success: true,
+          tokens: data.usage.tokens,
+          cost: data.usage.cost,
+          latencyMs: data.usage.latencyMs,
+        };
+        addLog(log);
+      }
+
       setPhrases(data.phrases);
       completeStep("story");
       goToStep("images");
@@ -98,8 +138,9 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setIsSplitting(false);
+      setLoading(null);
     }
-  }, [story, completeStep, goToStep]);
+  }, [story, completeStep, goToStep, addLog, setLoading]);
 
   /* Step 3: Handle Image Upload */
   const handleImagesChange = useCallback((uploadedImages: UploadedImage[]) => {
@@ -111,6 +152,7 @@ export default function Home() {
     if (images.length === 0 || phrases.length === 0) return;
 
     setIsAnalyzing(true);
+    setLoading("image_analysis");
     setError(null);
 
     try {
@@ -132,12 +174,33 @@ export default function Home() {
         throw new Error(analyzeData.error || "Failed to analyze images");
       }
 
+      /* Log image analysis usage */
+      if (analyzeData.usage) {
+        const log: LLMUsageLog = {
+          id: generateLogId(),
+          timestamp: new Date().toISOString(),
+          operation: "image_analysis",
+          provider: "gemini",
+          model: analyzeData.usage.model,
+          success: true,
+          tokens: analyzeData.usage.tokens,
+          cost: analyzeData.usage.cost,
+          latencyMs: analyzeData.usage.latencyMs,
+          batchInfo: {
+            totalItems: analyzeData.usage.itemLogs?.length ?? images.length,
+            itemLogs: analyzeData.usage.itemLogs ?? [],
+          },
+        };
+        addLog(log);
+      }
+
       setImageDescriptions(analyzeData.descriptions);
       completeStep("images");
 
       /* Place images */
       setIsAnalyzing(false);
       setIsPlacing(true);
+      setLoading("image_placement");
 
       const placeResponse = await fetch("/api/place-images", {
         method: "POST",
@@ -154,6 +217,23 @@ export default function Home() {
         throw new Error(placeData.error || "Failed to place images");
       }
 
+      /* Log image placement usage */
+      if (placeData.usage) {
+        const log: LLMUsageLog = {
+          id: generateLogId(),
+          timestamp: new Date().toISOString(),
+          operation: "image_placement",
+          provider: "gemini",
+          model: placeData.usage.model,
+          success: true,
+          tokens: placeData.usage.tokens,
+          cost: placeData.usage.cost,
+          latencyMs: placeData.usage.latencyMs,
+          finishReason: placeData.usage.finishReason,
+        };
+        addLog(log);
+      }
+
       setPlacements(placeData.placements);
       goToStep("placement");
     } catch (err) {
@@ -161,8 +241,9 @@ export default function Home() {
     } finally {
       setIsAnalyzing(false);
       setIsPlacing(false);
+      setLoading(null);
     }
-  }, [images, phrases, completeStep, goToStep]);
+  }, [images, phrases, completeStep, goToStep, addLog, setLoading]);
 
   /* Handle Placement Changes (manual drag-drop) */
   const handlePlacementChange = useCallback((newPlacements: ImagePlacement[]) => {
@@ -173,11 +254,14 @@ export default function Home() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b">
-        <div className="mx-auto px-4 py-4 max-w-[1280px]">
-          <h1 className="text-2xl font-bold">Image Placement PoC</h1>
-          <p className="text-sm text-muted-foreground">
-            Generate stories and place images on scenes
-          </p>
+        <div className="mx-auto px-4 py-4 max-w-[1280px] flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Image Placement PoC</h1>
+            <p className="text-sm text-muted-foreground">
+              Generate stories and place images on scenes
+            </p>
+          </div>
+          <LLMUsageBar />
         </div>
       </header>
 

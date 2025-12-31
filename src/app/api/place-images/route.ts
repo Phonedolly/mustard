@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { placeImages } from "@/lib/gemini/placeImages";
-import type { Phrase, ImageDescription, ImagePlacement } from "@/lib/core/types";
+import type { Phrase, ImageDescription } from "@/lib/core/types";
 
 /*
  * POST /api/place-images
@@ -102,14 +102,18 @@ export async function POST(request: NextRequest) {
     /*
      * Determine image placements using Gemini.
      * The placeImages function handles validation and fallbacks internally.
+     * Returns both placements and usage metadata for client-side logging.
      */
-    const placements: ImagePlacement[] = await placeImages(
+    const result = await placeImages(
       phrases as Phrase[],
       imageDescriptions as ImageDescription[],
       apiKey
     );
 
-    return NextResponse.json({ placements });
+    return NextResponse.json({
+      placements: result.placements,
+      usage: result.usage,
+    });
   } catch (error) {
     console.error("place-images API error:", error);
 
