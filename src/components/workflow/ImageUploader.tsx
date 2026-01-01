@@ -3,10 +3,23 @@
 /* ImageUploader - Multi-image upload with preview and base64 conversion */
 
 import { useState, useCallback, useRef } from "react";
+import imageCompression from "browser-image-compression";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+
+/*
+ * Image compression options.
+ * Compresses images before upload to stay within Vercel's body size limit.
+ * Even with Pro plan (50MB limit), compression improves upload speed and API performance.
+ */
+const COMPRESSION_OPTIONS = {
+  maxSizeMB: 1,
+  maxWidthOrHeight: 1920,
+  useWebWorker: true,
+  fileType: "image/jpeg" as const,
+};
 
 export interface UploadedImage {
   id: string;
@@ -27,11 +40,12 @@ const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 export function ImageUploader({
   onImagesChange,
   maxImages = 50,
-  maxSizeMB = 5,
+  maxSizeMB = 10,
 }: ImageUploaderProps) {
   const [images, setImages] = useState<UploadedImage[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /*
@@ -63,6 +77,7 @@ export function ImageUploader({
         return;
       }
 
+      setIsCompressing(true);
       const newImages: UploadedImage[] = [];
 
       for (const file of fileArray) {
@@ -80,20 +95,33 @@ export function ImageUploader({
         }
 
         try {
-          const base64 = await fileToBase64(file);
+          /*
+           * Compress image before processing.
+           * This reduces payload size for Vercel's body limit and improves upload speed.
+           * Original file is preserved for preview, compressed version for API upload.
+           */
+          console.log(`[ImageUploader] Compressing ${file.name} (${sizeMB.toFixed(2)}MB)...`);
+          const compressedFile = await imageCompression(file, COMPRESSION_OPTIONS);
+          const compressedSizeMB = compressedFile.size / (1024 * 1024);
+          console.log(`[ImageUploader] Compressed to ${compressedSizeMB.toFixed(2)}MB`);
+
+          const base64 = await fileToBase64(compressedFile);
           const preview = URL.createObjectURL(file);
 
           newImages.push({
             id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            file,
+            file: compressedFile,
             preview,
             base64,
-            mimeType: file.type,
+            mimeType: compressedFile.type,
           });
-        } catch {
+        } catch (err) {
+          console.error(`[ImageUploader] Failed to process ${file.name}:`, err);
           setError(`Failed to process: ${file.name}`);
         }
       }
+
+      setIsCompressing(false);
 
       if (newImages.length > 0) {
         const updated = [...images, ...newImages];
@@ -192,12 +220,14 @@ export function ImageUploader({
           />
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">
-              {isDragging
-                ? "Drop images here..."
-                : "Click or drag images to upload"}
+              {isCompressing
+                ? "Compressing images..."
+                : isDragging
+                  ? "Drop images here..."
+                  : "Click or drag images to upload"}
             </p>
             <p className="text-xs text-muted-foreground">
-              JPEG, PNG, WebP, GIF (max {maxSizeMB}MB each)
+              JPEG, PNG, WebP, GIF (auto-compressed to ~1MB)
             </p>
           </div>
         </div>
